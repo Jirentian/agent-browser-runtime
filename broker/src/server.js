@@ -249,6 +249,15 @@ app.post('/tabs/:tabId/screenshot', async (request) => {
   return writeArtifact({ leaseId: body.leaseId, tabId, kind: 'screenshot', ext, mimeType: `image/${ext === 'jpg' ? 'jpeg' : 'png'}`, base64: result.data });
 });
 
+app.delete('/tabs/:tabId', async (request, reply) => {
+  const tabId = Number(request.params.tabId);
+  const trackedTab = store.getTab(tabId);
+  if (!trackedTab || trackedTab.status === 'closed') return reply.code(404).send({ ok: false, error: 'TAB_NOT_FOUND' });
+  await extension.call('tabs.close', { tabId });
+  store.closeTab(tabId);
+  return { ok: true, closedTab: tabId, leaseId: trackedTab.leaseId };
+});
+
 app.post('/tabs/:tabId/ui/move', async (request) => runUiAction(Number(request.params.tabId), 'move', request.body || {}));
 app.post('/tabs/:tabId/ui/click', async (request) => runUiAction(Number(request.params.tabId), 'click', request.body || {}));
 app.post('/tabs/:tabId/ui/type', async (request) => runUiAction(Number(request.params.tabId), 'type', request.body || {}));

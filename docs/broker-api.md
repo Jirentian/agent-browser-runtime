@@ -96,6 +96,10 @@ Capture `document.documentElement.outerHTML` and write an HTML artifact.
 
 Capture JPEG/PNG screenshot and write an image artifact.
 
+### `DELETE /tabs/:tabId`
+
+Close one tracked tab through the Chrome companion extension and mark it closed in SQLite. Use this when a click opens a detail tab that should be captured and immediately removed while the original lease stays active.
+
 ## Jobs
 
 ### `GET /jobs?status=&limit=`

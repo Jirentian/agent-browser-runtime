@@ -105,6 +105,11 @@ async function main() {
     if (!leaseId || !tabId) throw new Error('browse-screenshot requires <leaseId> <tabId>');
     return print(await api('POST', `/tabs/${encodeURIComponent(tabId)}/screenshot`, { leaseId, ...parseOptions(args.slice(2)) }));
   }
+  if (cmd === 'tab-close' || cmd === 'close-tab') {
+    const tabId = args[0];
+    if (!tabId) throw new Error('tab-close requires <tabId>');
+    return print(await api('DELETE', `/tabs/${encodeURIComponent(tabId)}`));
+  }
   if (cmd === 'browse-end') {
     const id = args[0];
     if (!id) throw new Error('browse-end requires <leaseId>');
@@ -341,6 +346,7 @@ function help() {
     '  brs browse-nav <leaseId> <tabId> <url> [--screenshot] [--humanize enhanced]',
     '  brs browse-html <leaseId> <tabId>',
     '  brs browse-screenshot <leaseId> <tabId> [--full-page]',
+    '  brs tab-close <tabId>',
     '  brs browse-end <leaseId> [--keep-tabs]',
     '  brs fetch <url> [--agent demo-agent] [--task smoke] [--screenshot] [--full-page] [--keep-open] [--humanize enhanced] [--lease-id <leaseId> --tab-id <tabId>]',
     '  brs probe-session <platform> [--url <url>] [--include-cookies] [--include-storage-state] [--cooldown false] [--screenshot] [--save-html] [--keep-open] [--humanize off]',

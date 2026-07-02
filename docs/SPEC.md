@@ -149,6 +149,10 @@ Capture `document.documentElement.outerHTML` into an artifact.
 
 Capture a JPEG/PNG screenshot into an artifact.
 
+### `DELETE /tabs/:tabId`
+
+Close one tracked tab and mark it closed without releasing the parent lease. This supports list-to-detail workflows where a site opens a detail page in a new tab and the agent needs to capture the URL, close that detail tab, then continue on the original list tab.
+
 ### Humanization policy
 
 Task bodies can include `humanize` / `humanizePolicy` or the CLI flag `--humanize minimal|standard|enhanced|off`. The broker applies task-level pacing around open/navigate/html/screenshot; the companion extension executes low-level mousemove, wheel/scroll, and pause primitives. Defaults come from `BOT_HUMANIZE_LEVEL`. Avoid page-side `setTimeout` animation loops in background tabs; Chrome can throttle them heavily.
