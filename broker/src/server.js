@@ -251,11 +251,15 @@ app.post('/tabs/:tabId/screenshot', async (request) => {
 
 app.delete('/tabs/:tabId', async (request, reply) => {
   const tabId = Number(request.params.tabId);
-  const trackedTab = store.getTab(tabId);
-  if (!trackedTab || trackedTab.status === 'closed') return reply.code(404).send({ ok: false, error: 'TAB_NOT_FOUND' });
+  if (!Number.isFinite(tabId)) return reply.code(400).send({ ok: false, error: 'INVALID_TAB_ID' });
+  const trackedTab = (() => {
+    try { return store.getTab(tabId); } catch (_) { return null; }
+  })();
+  const actual = await extension.call('tabs.get', { tabId }).catch(() => null);
+  if ((!trackedTab || trackedTab.status === 'closed') && !actual?.tab) return reply.code(404).send({ ok: false, error: 'TAB_NOT_FOUND' });
   await extension.call('tabs.close', { tabId });
-  store.closeTab(tabId);
-  return { ok: true, closedTab: tabId, leaseId: trackedTab.leaseId };
+  if (trackedTab && trackedTab.status !== 'closed') store.closeTab(tabId);
+  return { ok: true, closedTab: tabId, leaseId: trackedTab?.leaseId || null, tracked: Boolean(trackedTab && trackedTab.status !== 'closed') };
 });
 
 app.post('/tabs/:tabId/ui/move', async (request) => runUiAction(Number(request.params.tabId), 'move', request.body || {}));
