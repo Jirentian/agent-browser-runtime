@@ -113,9 +113,12 @@ Use `--include-storage-state` only when you intentionally need a Playwright-styl
 
 ```bash
 ./cli/brs.js extract example.extract.js https://example.com --agent demo-agent --task extractor-smoke --screenshot --save-html
+./cli/brs.js extract example.extract.js --lease-id <leaseId> --tab-id <tabId> --agent demo-agent --task extractor-smoke
 ```
 
 The repository ships extractor scripts under `extractors/` to show how stable site workflows can be packaged behind the broker job API. Extractors export an optional params schema plus `extract({ url, finalUrl, pageHtml, tab, ui, params, attempt })`, and can use the runtime's real UI helpers before reading fresh HTML.
+
+Pass `--lease-id` and `--tab-id` to run an extractor against an already-open runtime tab. This keeps a multi-step agent workflow inside its existing tab group and avoids creating another one-shot extraction tab.
 
 Current examples:
 

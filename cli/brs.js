@@ -120,13 +120,24 @@ async function main() {
   }
   if (cmd === 'extract') {
     const extractor = args[0];
-    const url = args[1];
-    if (!extractor || !url) throw new Error('extract requires <extractor> <url>');
-    const options = parseOptions(args.slice(2));
+    let url = args[1];
+    let optionArgs = args.slice(2);
+    if (url && String(url).startsWith('--')) {
+      optionArgs = args.slice(1);
+      url = null;
+    }
+    if (!extractor) throw new Error('extract requires <extractor> <url> or <extractor> --lease-id <leaseId> --tab-id <tabId>');
+    const options = parseOptions(optionArgs);
+    const leaseId = options.leaseId || options.lease;
+    const tabId = options.tabId || options.tab;
+    if (!url && (!leaseId || !tabId)) throw new Error('extract requires <url> unless --lease-id and --tab-id are provided');
+    if ((leaseId && !tabId) || (!leaseId && tabId)) throw new Error('extract tab reuse requires both --lease-id and --tab-id');
     const params = attachUploadFileParam(parseJsonOption(options.params || options.paramsJson, {}), options);
     return print(await api('POST', '/jobs/extract', {
       extractor,
       url,
+      leaseId,
+      tabId,
       agentId: options.agent || options.agentId || 'cli',
       taskId: options.task || options.taskId || `extract:${extractor}`,
       screenshot: Boolean(options.screenshot),
@@ -307,7 +318,38 @@ function coerce(value) {
 
 function print(obj) { console.log(JSON.stringify(obj, null, 2)); }
 function help() {
-  console.log(`Agent Browser Runtime CLI\n\nUsage:\n  brs status\n  brs health\n  brs tab-audit\n  brs tab-reconcile\n  brs leases\n  brs jobs [--status success]\n  brs job <jobId>\n  brs artifacts [--leaseId <leaseId>] [--kind screenshot]\n  brs artifact <artifactId>\n  brs artifact-download <artifactId> <outputPath>\n  brs artifact-delete <artifactId>\n  brs cleanup-artifacts [--olderThanDays 7] [--dryRun false]\n  brs acquire --agentId demo-agent --taskId smoke --domain example.com\n  brs open <leaseId> <url>\n  brs ui <tabId> <move|click|type|press|scroll|wait-for|upload-file> [--selector input[name=q]] [--text query] [--key Enter] [--file /path/to/file]\n  brs browse-start <url> [--agent demo-agent] [--task research]\n  brs browse-nav <leaseId> <tabId> <url> [--screenshot] [--humanize enhanced]\n  brs browse-html <leaseId> <tabId>\n  brs browse-screenshot <leaseId> <tabId> [--full-page]\n  brs browse-end <leaseId> [--keep-tabs]\n  brs fetch <url> [--agent demo-agent] [--task smoke] [--screenshot] [--full-page] [--keep-open] [--humanize enhanced] [--lease-id <leaseId> --tab-id <tabId>]\n  brs probe-session <platform> [--url <url>] [--include-cookies] [--include-storage-state] [--cooldown false] [--screenshot] [--save-html] [--keep-open] [--humanize off]\n  brs extract <extractor.extract.js> <url> [--agent demo-agent] [--task smoke] [--screenshot] [--save-html] [--humanize enhanced] [--params '{"limit":3}'] [--file /path/to/file] [--file-param uploadFile] [--max-attempts 2]\n  brs release <leaseId> [--keep-tabs]\n\nEnv:\n  BRS_BROKER_URL=${DEFAULT_BROKER}`);
+  console.log([
+    'Agent Browser Runtime CLI',
+    '',
+    'Usage:',
+    '  brs status',
+    '  brs health',
+    '  brs tab-audit',
+    '  brs tab-reconcile',
+    '  brs leases',
+    '  brs jobs [--status success]',
+    '  brs job <jobId>',
+    '  brs artifacts [--leaseId <leaseId>] [--kind screenshot]',
+    '  brs artifact <artifactId>',
+    '  brs artifact-download <artifactId> <outputPath>',
+    '  brs artifact-delete <artifactId>',
+    '  brs cleanup-artifacts [--olderThanDays 7] [--dryRun false]',
+    '  brs acquire --agentId demo-agent --taskId smoke --domain example.com',
+    '  brs open <leaseId> <url>',
+    '  brs ui <tabId> <move|click|type|press|scroll|wait-for|upload-file> [--selector input[name=q]] [--text query] [--key Enter] [--file /path/to/file]',
+    '  brs browse-start <url> [--agent demo-agent] [--task research]',
+    '  brs browse-nav <leaseId> <tabId> <url> [--screenshot] [--humanize enhanced]',
+    '  brs browse-html <leaseId> <tabId>',
+    '  brs browse-screenshot <leaseId> <tabId> [--full-page]',
+    '  brs browse-end <leaseId> [--keep-tabs]',
+    '  brs fetch <url> [--agent demo-agent] [--task smoke] [--screenshot] [--full-page] [--keep-open] [--humanize enhanced] [--lease-id <leaseId> --tab-id <tabId>]',
+    '  brs probe-session <platform> [--url <url>] [--include-cookies] [--include-storage-state] [--cooldown false] [--screenshot] [--save-html] [--keep-open] [--humanize off]',
+    '  brs extract <extractor.extract.js> [url] [--agent demo-agent] [--task smoke] [--screenshot] [--save-html] [--humanize enhanced] [--lease-id <leaseId> --tab-id <tabId>] [--params \'{"limit":3}\'] [--file /path/to/file] [--file-param uploadFile] [--max-attempts 2]',
+    '  brs release <leaseId> [--keep-tabs]',
+    '',
+    'Env:',
+    `  BRS_BROKER_URL=${DEFAULT_BROKER}`,
+  ].join('\n'));
 }
 
 main().catch((error) => {

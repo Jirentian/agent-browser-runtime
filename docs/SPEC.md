@@ -228,10 +228,13 @@ Expose recent jobs plus job logs and related artifacts for internal observabilit
 
 Runs `/extractors/<name>.extract.js`; extractor must export `extract({ url, finalUrl, pageHtml, tab, ui, params, attempt })`. It may export `schema` / `paramsSchema` for simple params validation. Broker supports `maxAttempts` / `retries` and writes `error` artifacts on failed attempts. The broker writes a JSON result artifact and can optionally save HTML/screenshot artifacts.
 
+If the request includes `leaseId` and `tabId`, the broker reads HTML from that tracked open tab and returns `reusedTab: true`. Caller-owned tabs stay open after success or failure. Without `leaseId` and `tabId`, the broker keeps the one-shot extraction behavior and creates/releases its own lease and tab.
+
 CLI:
 
 ```bash
 ./cli/brs.js extract example.extract.js https://example.com --agent demo-agent --task extractor-smoke --screenshot --save-html
+./cli/brs.js extract example.extract.js --lease-id <leaseId> --tab-id <tabId> --agent demo-agent --task extractor-smoke
 ```
 
 ## Extension JSON-RPC

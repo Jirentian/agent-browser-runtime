@@ -20,4 +20,8 @@ test('runtime exposes continuous browsing commands that reuse one lease tab', as
   assert.match(cliSource, /options\.leaseId \|\| options\.lease/, 'fetch must accept a reusable lease id');
   assert.match(cliSource, /options\.tabId \|\| options\.tab/, 'fetch must accept a reusable tab id');
   assert.match(cliSource, /\/tabs\/\$\{encodeURIComponent\(tabId\)\}\/fetch-page/, 'fetch reuse path must call tab-scoped fetch-page');
+
+  assert.match(brokerSource, /reusedTab:\s*reuseExistingTab/, 'extract jobs must report whether they reused an existing tab');
+  assert.match(brokerSource, /if \(!reuseExistingTab && !body\.keepOpen\)/, 'extract tab reuse must keep caller-owned tabs open');
+  assert.match(cliSource, /extract tab reuse requires both --lease-id and --tab-id/, 'extract must require both lease and tab ids for reuse');
 });

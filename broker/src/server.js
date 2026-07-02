@@ -259,7 +259,25 @@ app.post('/tabs/:tabId/ui/upload-file', async (request) => runUiAction(Number(re
 
 app.post('/jobs/extract', async (request, reply) => {
   const body = request.body || {};
-  if (!body.url) return reply.code(400).send({ ok: false, error: 'url is required' });
+  const reuseLeaseId = body.leaseId ? String(body.leaseId) : null;
+  const reuseTabId = body.tabId != null ? Number(body.tabId) : null;
+  const reuseExistingTab = Boolean(reuseLeaseId && Number.isFinite(reuseTabId));
+  if ((reuseLeaseId && !Number.isFinite(reuseTabId)) || (!reuseLeaseId && body.tabId != null)) {
+    return reply.code(400).send({ ok: false, error: 'leaseId and tabId are both required for extract tab reuse' });
+  }
+  if (!body.url && !reuseExistingTab) return reply.code(400).send({ ok: false, error: 'url is required unless leaseId and tabId are provided' });
+
+  let trackedTab = null;
+  if (reuseExistingTab) {
+    const reusableLease = requireLease(reuseLeaseId, reply);
+    if (!reusableLease) return reply;
+    trackedTab = store.getTab(reuseTabId);
+    if (!trackedTab || trackedTab.status === 'closed') return reply.code(404).send({ ok: false, error: 'TAB_NOT_FOUND' });
+    if (trackedTab.leaseId !== reuseLeaseId) {
+      return reply.code(409).send({ ok: false, error: 'TAB_LEASE_MISMATCH', tabLeaseId: trackedTab.leaseId, leaseId: reuseLeaseId });
+    }
+  }
+
   const extractorName = sanitizeExtractorName(body.extractor || 'example.extract.js');
   const extractorPath = join(extractorsDir, extractorName);
   const extractorModule = await import(`${pathToFileURL(extractorPath).href}?t=${Date.now()}`);
@@ -276,13 +294,14 @@ app.post('/jobs/extract', async (request, reply) => {
   const maxAttempts = readRetryAttempts(body);
   const nowIso = new Date().toISOString();
   const jobId = `extract_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const jobUrl = String(body.url || trackedTab?.url || '');
   store.createJob({
     id: jobId,
     kind: 'extract',
     status: 'queued',
     agentId: String(body.agentId || 'agent'),
     taskId: String(body.taskId || `extract:${extractorName}`),
-    url: String(body.url),
+    url: jobUrl,
     extractor: extractorName,
     attempts: 0,
     maxAttempts,
@@ -290,19 +309,21 @@ app.post('/jobs/extract', async (request, reply) => {
     updatedAt: nowIso,
   });
 
-  const lease = store.createLease({
-    id: jobId,
-    agentId: String(body.agentId || 'agent'),
-    taskId: String(body.taskId || `extract:${extractorName}`),
-    domain: inferDomain(body.url),
-    mode: String(body.mode || 'shared-context-tab-group'),
-    chromeGroupId: null,
-    title: compactTitle(body.title || `${body.agentId || 'agent'} / ${extractorName}`),
-    color: body.color || colorFor(`${body.url}:${extractorName}`),
-    status: 'allocated',
-    createdAt: nowIso,
-    expiresAt: new Date(Date.now() + readPositiveNumber(body.ttlMs, 15 * 60 * 1000)).toISOString(),
-  });
+  const lease = reuseExistingTab
+    ? store.getLease(reuseLeaseId)
+    : store.createLease({
+      id: jobId,
+      agentId: String(body.agentId || 'agent'),
+      taskId: String(body.taskId || `extract:${extractorName}`),
+      domain: inferDomain(body.url),
+      mode: String(body.mode || 'shared-context-tab-group'),
+      chromeGroupId: null,
+      title: compactTitle(body.title || `${body.agentId || 'agent'} / ${extractorName}`),
+      color: body.color || colorFor(`${body.url}:${extractorName}`),
+      status: 'allocated',
+      createdAt: nowIso,
+      expiresAt: new Date(Date.now() + readPositiveNumber(body.ttlMs, 15 * 60 * 1000)).toISOString(),
+    });
   store.updateJob(jobId, { leaseId: lease.id });
 
   const artifacts = [];
@@ -311,25 +332,43 @@ app.post('/jobs/extract', async (request, reply) => {
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     created = null;
     store.updateJob(jobId, { status: 'running', attempts: attempt });
-    addJobLog(jobId, 'info', 'attempt.start', { attempt, maxAttempts, url: body.url, extractor: extractorName });
+    addJobLog(jobId, 'info', 'attempt.start', { attempt, maxAttempts, url: jobUrl, extractor: extractorName, reusedTab: reuseExistingTab });
     try {
-      const currentLease = store.getLease(lease.id);
-      created = await extension.call('tabs.create', {
-        url: body.url,
-        groupId: currentLease?.chromeGroupId || undefined,
-        groupTitle: lease.title,
-        groupColor: lease.color,
-        active: Boolean(body.active),
-        waitUntilCompleteMs: readPositiveNumber(body.waitUntilCompleteMs, 15000),
-      }, { timeoutMs: readPositiveNumber(body.timeoutMs, 60000) });
-      if (created.chromeGroupId != null && created.chromeGroupId !== currentLease?.chromeGroupId) store.updateLeaseGroup(lease.id, created.chromeGroupId);
-      store.addTab({ id: created.tab.id, leaseId: lease.id, url: created.tab.url || body.url, title: created.tab.title, status: 'open', createdAt: new Date().toISOString() });
+      if (reuseExistingTab) {
+        created = {
+          tab: {
+            id: reuseTabId,
+            url: jobUrl,
+            title: trackedTab.title || null,
+            status: trackedTab.status || 'open',
+          },
+        };
+      } else {
+        const currentLease = store.getLease(lease.id);
+        created = await extension.call('tabs.create', {
+          url: body.url,
+          groupId: currentLease?.chromeGroupId || undefined,
+          groupTitle: lease.title,
+          groupColor: lease.color,
+          active: Boolean(body.active),
+          waitUntilCompleteMs: readPositiveNumber(body.waitUntilCompleteMs, 15000),
+        }, { timeoutMs: readPositiveNumber(body.timeoutMs, 60000) });
+        if (created.chromeGroupId != null && created.chromeGroupId !== currentLease?.chromeGroupId) store.updateLeaseGroup(lease.id, created.chromeGroupId);
+        store.addTab({ id: created.tab.id, leaseId: lease.id, url: created.tab.url || body.url, title: created.tab.title, status: 'open', createdAt: new Date().toISOString() });
 
-      await humanizeTab(created.tab.id, body, 'job-open');
+        await humanizeTab(created.tab.id, body, 'job-open');
+      }
       const htmlResult = await extension.call('page.html', { tabId: created.tab.id }, { timeoutMs: readPositiveNumber(body.htmlTimeoutMs, 30000) });
+      const tabForExtract = htmlResult.tab || created.tab;
+      if (tabForExtract?.url || tabForExtract?.title) {
+        created.tab = { ...created.tab, ...tabForExtract };
+        store.updateTab(created.tab.id, { url: created.tab.url || jobUrl, title: created.tab.title || null, status: 'open' });
+      }
+      const extractUrl = String(body.url || created.tab.url || jobUrl);
+      if (extractUrl && extractUrl !== jobUrl) store.updateJob(jobId, { url: extractUrl });
       const result = await extract({
-        url: body.url,
-        finalUrl: created.tab.url,
+        url: extractUrl,
+        finalUrl: created.tab.url || extractUrl,
         pageHtml: htmlResult.html || '',
         tab: created.tab,
         ui: createTabUi(created.tab.id, body),
@@ -343,30 +382,32 @@ app.post('/jobs/extract', async (request, reply) => {
         const shot = await extension.call('screenshot.capture', { tabId: created.tab.id, fullPage: Boolean(body.fullPage), format: body.format || 'jpeg', quality: readPositiveNumber(body.quality, 80) }, { timeoutMs: readPositiveNumber(body.screenshotTimeoutMs, 45000) });
         artifacts.push(await writeArtifact({ leaseId: lease.id, tabId: created.tab.id, kind: 'screenshot', ext: shot.format === 'png' ? 'png' : 'jpg', mimeType: shot.format === 'png' ? 'image/png' : 'image/jpeg', base64: shot.data }));
       }
-      if (!body.keepOpen) {
+      if (!reuseExistingTab && !body.keepOpen) {
         await extension.call('tabs.close', { tabId: created.tab.id }).catch(() => {});
         store.closeTab(created.tab.id);
         store.releaseLease(lease.id);
       }
       store.updateJob(jobId, { status: 'success', finishedAt: new Date().toISOString(), error: null });
-      addJobLog(jobId, 'info', 'attempt.success', { attempt, artifactCount: artifacts.length });
-      return { job: store.getJob(jobId), lease: store.getLease(lease.id), tab: created.tab, extractor: extractorName, result, artifacts };
+      addJobLog(jobId, 'info', 'attempt.success', { attempt, artifactCount: artifacts.length, reusedTab: reuseExistingTab });
+      return { job: store.getJob(jobId), lease: store.getLease(lease.id), tab: created.tab, extractor: extractorName, result, artifacts, reusedTab: reuseExistingTab };
     } catch (error) {
       lastError = normalizeError(error);
       addJobLog(jobId, 'error', 'attempt.failed', { attempt, error: lastError });
       if (created?.tab?.id) {
-        artifacts.push(await writeArtifact({ leaseId: lease.id, tabId: created.tab.id, kind: 'error', ext: 'json', mimeType: 'application/json', data: JSON.stringify({ jobId, attempt, maxAttempts, url: body.url, extractor: extractorName, error: lastError }, null, 2) }));
-        await extension.call('tabs.close', { tabId: created.tab.id }).catch(() => {});
-        store.closeTab(created.tab.id);
-        store.updateLeaseGroup(lease.id, null);
+        artifacts.push(await writeArtifact({ leaseId: lease.id, tabId: created.tab.id, kind: 'error', ext: 'json', mimeType: 'application/json', data: JSON.stringify({ jobId, attempt, maxAttempts, url: jobUrl, extractor: extractorName, reusedTab: reuseExistingTab, error: lastError }, null, 2) }));
+        if (!reuseExistingTab) {
+          await extension.call('tabs.close', { tabId: created.tab.id }).catch(() => {});
+          store.closeTab(created.tab.id);
+          store.updateLeaseGroup(lease.id, null);
+        }
       }
       if (attempt < maxAttempts) await sleep(readPositiveNumber(body.retryDelayMs, 750) * attempt);
     }
   }
 
-  store.releaseLease(lease.id, 'released');
+  if (!reuseExistingTab) store.releaseLease(lease.id, 'released');
   store.updateJob(jobId, { status: 'failed', finishedAt: new Date().toISOString(), error: JSON.stringify(lastError) });
-  return reply.code(500).send({ ok: false, job: store.getJob(jobId), lease: store.getLease(lease.id), extractor: extractorName, error: lastError, artifacts });
+  return reply.code(500).send({ ok: false, job: store.getJob(jobId), lease: store.getLease(lease.id), extractor: extractorName, error: lastError, artifacts, reusedTab: reuseExistingTab });
 });
 
 app.post('/jobs/fetch-page', async (request) => {
