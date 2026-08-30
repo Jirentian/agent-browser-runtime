@@ -251,6 +251,9 @@ function parseProfileHtml(html, profileUrl) {
       /<[^>]*class="[^"]*\bbio\b[^"]*"[^>]*>([\s\S]*?)<\/[^>]+>/i,
       /<[^>]*class="[^"]*\bdesc\b[^"]*"[^>]*>([\s\S]*?)<\/[^>]+>/i,
     ]),
+    redId: (firstClean(html, [
+      /<[^>]*class="[^"]*\buser-redId\b[^"]*"[^>]*>([\s\S]*?)<\/[^>]+>/i,
+    ]).replace(/^小红书号[：:]?\s*/, '')) || '',
     location: firstClean(html, [
       /<[^>]*class="[^"]*\buser-ip\b[^"]*"[^>]*>([\s\S]*?)<\/[^>]+>/i,
       /<[^>]*class="[^"]*\bip-container\b[^"]*"[^>]*>([\s\S]*?)<\/[^>]+>/i,
@@ -300,24 +303,30 @@ function splitCommentBlocks(html) {
   });
 }
 
+// 2026-08 layout: a parent-comment block contains one main comment-item
+// (class="comment-item") followed by zero or more reply comment-items
+// (class="comment-item comment-item-sub"). Each comment unit wraps its fields
+// in a .comment-inner-container: a.name (nickname) + div.content (note-text).
+// We no longer split on reply-container (its class/structure changed).
 function parseParentComment(block) {
-  const splitIdx = block.search(/class="[^"]*\breply-container\b/i);
-  const head = splitIdx >= 0 ? block.slice(0, splitIdx) : block;
-  const tail = splitIdx >= 0 ? block.slice(splitIdx) : '';
-  return {
-    ...parseCommentFields(head),
-    replies: extractReplyBlocks(tail).map(parseCommentFields).filter((item) => item.nickname && item.content),
-  };
+  const units = splitCommentUnits(block);
+  if (units.length === 0) return parseCommentFields(block);
+  const main = parseCommentFields(units[0]);
+  const replies = units.slice(1)
+    .map(parseCommentFields)
+    .filter((item) => item.nickname && item.content);
+  return { ...main, replies };
 }
 
-function extractReplyBlocks(html) {
+// Split a parent-comment block into per-comment units by comment-item markers,\nexcluding the wrapping parent-comment tag itself.
+function splitCommentUnits(block) {
   const starts = [];
-  const re = /<[^>]*class="[^"]*(?:\breply-item\b|\bsub-comment-item\b|\bcomment-item-sub\b|\bcomment-inner-container\b)[^"]*"[^>]*>/gi;
+  const re = /<div[^>]*id="comment-[a-f0-9]{24}"[^>]*class="[^"]*\bcomment-item\b[^"]*"[^>]*>/gi;
   let match;
-  while ((match = re.exec(html))) starts.push(match.index);
+  while ((match = re.exec(block))) starts.push(match.index);
   return starts.map((start, index) => {
-    const end = index + 1 < starts.length ? starts[index + 1] : html.length;
-    return html.slice(start, end);
+    const end = index + 1 < starts.length ? starts[index + 1] : block.length;
+    return block.slice(start, end);
   });
 }
 
@@ -332,13 +341,19 @@ function parseCommentFields(block) {
   ], true);
   const date = firstClean(block, [
     /<span[^>]*class="[^"]*\bdate\b[^"]*"[^>]*>([\s\S]*?)<\/span>/i,
+    /<div[^>]*class="[^"]*\bdate\b[^"]*"[^>]*>([\s\S]*?)<\/div>/i,
     /selected-disabled-search[^>]*>([\s\S]*?)<\/span>/i,
+  ]);
+  const likes = firstClean(block, [
+    /<span[^>]*class="[^"]*\blike-wrapper\b[^"]*"[^>]*>[\s\S]*?<span[^>]*class="[^"]*\bcount\b[^"]*"[^>]*>([\s\S]*?)<\/span>/i,
+    /<span[^>]*class="[^"]*\bcount\b[^"]*"[^>]*>([\s\S]*?)<\/span>/i,
   ]);
   return {
     nickname: name,
     profileUrl: href ? toAbsoluteXhsUrl(href) : '',
     content,
     date,
+    likes,
   };
 }
 
